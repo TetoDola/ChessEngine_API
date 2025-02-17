@@ -1,6 +1,6 @@
 import chess
 import chess.engine
-
+#bruh
 engine = chess.engine.SimpleEngine.popen_uci(r"C:\Users\Teto\Downloads\stockfish-windows-x86-64-avx2 (1)\stockfish\stockfish-windows-x86-64-avx2.exe")
 board = chess.Board()
 while not board.is_game_over():
