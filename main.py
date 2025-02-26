@@ -1,43 +1,82 @@
 import os
 
-import chess
 import chess.engine
-import os
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# Load Env
 load_dotenv()
 
-#bruhss
-engine = chess.engine.SimpleEngine.popen_uci(os.getenv('CHESSENGINE_PATH'))
+# App Initialization
+app = FastAPI(
+    title="Chess Engine API",
+    description="An API for an AI Chess Bot",
+    version="1.0",
+)
 
-def initialize_board():
-    board = chess.Board()
-    fen = input("Enter the FEN: ")
-    user_move = input("Enter your move: ")
+# Engine Initialization
+CHESSENGINE_PATH = os.getenv("CHESSENGINE_PATH")
+if not CHESSENGINE_PATH:
+    raise RuntimeError("CHESSENGINE_PATH not set")
 
+# Initialize Engine
+engine = chess.engine.SimpleEngine.popen_uci(CHESSENGINE_PATH)
+
+# Models for request and response
+# Using BaseModel allows to validate incoming Json in FastAPI. :) Interesting stuff.
+class MoveRequest(BaseModel):
+    fen: str
+    user_move: str # Required or not? For testing it might be useful to not need. Also how do i know which user's turn it is ?
+    engine_elo: int = 1200
+    depth: int = 15
+
+class MoveResponse(BaseModel):
+    updated_fen: str
+    best_move: str
+    engine_elo: int
+
+# Move
+@app.post("/move", response_model=MoveResponse)
+def get_engine_move(req: MoveRequest):
+    # Initialize board from FEN
     try:
-        board = chess.Board(fen)
-        print(board)
-        print(board.turn)
-    except Exception as error:
-        print(error)
+        board = chess.Board(req.fen)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid FEN string")
 
-    try:
-        move = chess.Move.from_uci(user_move)
-        if move in board.legal_moves:
-            board.push(move)
-            print(board)
-            return board
+    # User Move Req validation
+    if req.user_move:
+        try:
+            user_move_obj = chess.Move.from_uci(req.user_move)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid move notation")
+
+        if user_move_obj in board.legal_moves:
+            board.push(user_move_obj)
         else:
-            print("Invalid move")
-            initialize_board()
-    except Exception as error:
-        print(error)
+            raise HTTPException(status_code=400, detail="Illegal move")
 
-def main():
-    b = initialize_board()
-    result = engine.play(b, chess.engine.Limit(time=0.1))
-    print(f"Engine move: {result.move}")
+    # Engine Config
+    try:
+        engine.configure({"UCI_LimitStrength": True, "UCI_Elo": req.engine_elo})
+    except (chess.engine.EngineError, chess.engine.EngineTerminatedError) as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to configure engine with ELO: {e}"
+        )
+    # Engine Move
+    try:
+        result = engine.play(board, limit=chess.engine.Limit(depth=req.depth))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Engine error: {e}")
 
-if __name__ == "__main__":
-    main()
+    # Move Piece
+    board.push(result.move)
+
+
+    return MoveResponse(
+        updated_fen=board.fen(),
+        best_move=result.move.uci(),
+        engine_elo=req.engine_elo,
+    )
